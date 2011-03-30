@@ -1,0 +1,150 @@
+<?php
+// $Id$
+
+/**
+ * Implementation of hook_init()
+ * Used to disable the caching of the module
+ */
+function manga_update_init() {
+  // We don't want caching for this module
+  if (drupal_match_path($_GET['q'],'manga_update/*')) {
+    $GLOBALS['conf']['cache'] = FALSE;
+  } 
+}
+
+
+/**
+ * @file
+ * Module for fetching recent updates from Mangastream.com
+ * This module provides block content retrieved from a Mangastream.com
+ * @see http://www.mangastream.com
+ */
+
+/**
+ * Implementation of hook_block
+ */
+function manga_update_block($op='list' , $delta=0, $edit=array()) {
+  switch ($op) {
+    case 'list':
+      $blocks[0]['info'] = t('Manga Updates');
+      return $blocks;
+    case 'view':
+      $url = 'http://feeds.feedburner.com/mstream?format=xml';          
+      $blocks['subject'] = t('Manga Updates');
+      $blocks['content'] = _manga_update_fetch_updates($url);
+      return $blocks;
+  }
+}
+
+/**
+ * Implementation of hook_help()
+ */
+function manga_update_help($path, $arg) {
+  
+  if ($path == 'admin/help#manga_updates') {
+    $txt = 'The Manga Update module uses the !mangastream_url XML '
+      .'API to retrieve a list of recent manga updates and display it as a block '
+      .'content.';
+    $link = l('Mangastream.com', 'http://www.mangastream.com');
+    $replace = array(
+      '!mangastream_url' => $link
+    );
+    return '<p>'. t($txt, $replace) .'</p>';
+    
+  }
+}
+
+/* END HOOKS */
+
+
+/**
+ * Retrieve information from the Mangastream XML API.
+ * 
+ * This makes an HTTP connection to the given URL, and retrieves
+ * XML data, which it then attempts to format for display.
+ *
+ * @param $url URL to the manga updates.
+ * @param $num_items Number of items to include in results.
+ * @return string String containing the manga update.
+ */
+function _manga_update_fetch_updates($url, $num_items=3) {
+  $http_result = drupal_http_request($url);
+  if ($http_result->code == 200) {
+      $doc = new DOMDocument();
+      try {
+        $doc->loadXML($http_result->data);
+      } catch (DOMException $e) {
+        $msg = "Error parsing updates XML for %url: %msg.";
+        $vars = array('%url'=>$url, '%msg'=>$e->getMessage());
+        watchdog('goodreads', $msg, $vars, WATCHDOG_WARNING);
+        return t("Getting the updates resulted in an error."); 
+      }
+      
+      return _manga_update_block_content($doc, $num_items);
+      
+    // Otherwise we don't have any data
+  } else {
+      $msg = 'No content from %url.';
+      $vars = array( '%url' => $url );
+      watchdog('manga_update', $msg, $vars, WATCHDOG_WARNING);
+      return t("The manga update is not accessible.");
+  }
+}
+
+
+/**
+ * Generate the contents of a block from a DOM document.
+ * Given a DOM document and the maximum number of entries,
+ * generate some content.
+ * @param $doc DOMDocument object containing Mangasteam XML.
+ * @param $num_items Number of items to format for display.
+ * @return string Formatted string. 
+ */
+function _manga_update_block_content($doc, $num_items=3) {
+  
+  $items_nl = $doc->getElementsByTagName('item');
+  $len = ($items_nl->length < $num_items) ? $items_nl->length : $num_items;
+  
+  $template = '<div class="manga-updates">'
+            .'%s<span class="hot-image"></span><br/>%s<br/>%s<br/><br/></div>';
+  
+  for ($i = 0; $i < $len; ++$i) {
+    
+    $item_ele = $items_nl->item($i);
+    $children_nl = $item_ele->childNodes;
+    $title = '';
+    $link = 'http://www.mangastream.com';
+    $pubDate = '';
+    $description = '';
+    foreach ($children_nl as $child_node) {
+      
+      if ($child_node->nodeType == XML_ELEMENT_NODE) {
+        switch ($child_node->nodeName) {
+          
+          case 'title':
+            $title = $child_node->textContent;
+            break;
+            
+          case 'link':
+            $link = check_plain($child_node->textContent);
+            break;
+            
+          case 'pubDate':
+            $pubDate = $child_node->textContent;
+            break;
+            
+          case 'description':
+            $description = $child_node->textContent;
+            break;
+        }
+      }
+    }
+    
+    $update_link = l($title, $link);
+    $out .= sprintf( $template, $update_link, $description, $pubDate);
+  }
+  $out .= '<div class="manga-more">'
+         . l('read more manga at Mangastream.com', 'http://www.mangastream.com')
+         .'</div>';
+  return $out;
+}

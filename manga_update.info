@@ -1,0 +1,5 @@
+;$Id$
+
+name = "Manga updates"
+description = "Display manga updates from Mangastream.com"
+core = 6.x
